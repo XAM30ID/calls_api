@@ -1,4 +1,5 @@
 import time
+from random import randint
 
 from mutagen.mp3 import MP3
 from mutagen.wave import WAVE
@@ -35,7 +36,16 @@ def get_sound_duration(file_path: str, record_id: int):
         record = session.query(RecordModel).filter(RecordModel.id == record_id).first()
         call = session.query(CallModel).filter(CallModel.id == record.call_id).first()
         record.duration = duration_seconds
+        silences = []
+        for _ in range(randint(4, 10)):
+            silences.append(randint(1, int(duration_seconds)))
+        silences.sort()
+        silences_list = map(lambda x: str(x), silences)
+        print('='* 100)
+        print(silences_list)
+        record.silences = ';'.join(silences_list)
         call.recording = record
+        call.status = 'processing'
         session.commit()
     return duration_seconds
 
@@ -58,5 +68,6 @@ def get_sound_text(record_id):
         call = session.query(CallModel).filter(CallModel.id == record.call_id).first()
         record.transcription = 'Detected speech fragment: Hello world!'
         call.recording = record
+        call.status = 'ready'
         session.commit()
     return 'Detected speech fragment: Hello world!'

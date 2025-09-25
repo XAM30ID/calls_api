@@ -33,8 +33,10 @@ class CallModel(Base):
     caller = Column(String)
     reciver = Column(String)
     started_at = Column(DateTime)
+    status = Column(String, default='created')
     recording = relationship("RecordModel", back_populates="call", uselist=False, lazy='selectin')
     
+
 class RecordModel(Base):
     '''
         Модель записей
@@ -45,6 +47,7 @@ class RecordModel(Base):
     filename = Column(String)
     duration = Column(Integer)
     transcription = Column(String)
+    silences = Column(String, default=None)
     call_id = Column(Integer, ForeignKey("Calls.id"))
     call = relationship("CallModel", back_populates="recording", uselist=False, lazy='selectin')
 

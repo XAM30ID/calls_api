@@ -1,10 +1,15 @@
 import os
 from datetime import datetime
-from typing import Optional
 
 from fastapi import FastAPI, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
+from fastapi import HTTPException
+from datetime import datetime, timedelta
+import os
+from urllib.parse import urlencode
+import hmac
+import hashlib
 
 from .database import setup_database, CallModel, SessionDep, RecordModel
 from .tasks import get_sound_duration, get_sound_text
@@ -43,6 +48,16 @@ async def get_call(call_id: int, session: SessionDep):
     query = select(CallModel).filter(CallModel.id == call_id)
     result = await session.execute(query)
     return result.scalar_one_or_none()
+
+
+@app.get('/calls/by_phone/{phone_number}/', tags=['Звонки'], summary='Получение звнока', description='Эндпоинт для получения звонка по номеру')
+async def get_call_by_phone(phone_number: str, session: SessionDep):
+    '''
+        Получение звонка по номеру
+    '''
+    query = select(CallModel).filter(CallModel.caller == phone_number or CallModel.reciver == phone_number)
+    result = await session.execute(query)
+    return result.scalars().all()
 
 
 @app.post('/calls', tags=['Звонки'], summary='Создание звонка', description='Эндпоинт для создания звонка. Указывается исходящий номер, входящий номер и дата начала')
@@ -100,3 +115,64 @@ async def record_call(call_id: int, file: UploadFile, session: SessionDep):
     get_sound_text.delay(record_id=new_record.id)
     
     return new_record
+
+
+
+SECRET_KEY = "test-secret-key-here"
+
+@app.get("/calls/records/{record_id}/download-url", tags=['Записи'], summary='Получить URL для скачивания записи')
+async def get_download_url(record_id: int, session: SessionDep, expires_in: int = 3600):
+    """
+    Генерирует presigned URL для скачивания записи.
+    """
+    # Находим запись в базе
+    query = select(RecordModel).filter(RecordModel.id == record_id)
+    result = await session.execute(query)
+    record = result.scalar_one_or_none()
+    
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    
+    # Проверяем существование файла
+    file_path = os.path.join('app', 'records', record.filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    
+    # Генерируем presigned URL
+    presigned_url = generate_presigned_url(record_id, record.filename, expires_in)
+    
+    return {
+        "record_id": record_id,
+        "filename": record.filename,
+        "download_url": presigned_url,
+        "expires_at": (datetime.now() + timedelta(seconds=expires_in)).isoformat(),
+        "expires_in_seconds": expires_in
+    }
+
+
+def generate_presigned_url(record_id: int, filename: str, expires_in: int) -> str:
+    """Генерирует presigned URL с подписью"""
+    # Время истечения срока действия
+    expiration = int((datetime.now() + timedelta(seconds=expires_in)).timestamp())
+    
+    # Данные для подписи
+    data_to_sign = f"{record_id}:{filename}:{expiration}"
+    
+    # Создаем подпись
+    signature = hmac.new(
+        SECRET_KEY.encode('utf-8'),
+        data_to_sign.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    
+    # Кодируем параметры
+    params = {
+        'record_id': record_id,
+        'filename': filename,
+        'expires': expiration,
+        'signature': signature
+    }
+    
+    # Возвращаем полный URL
+    base_url = "http://localhost:8000"
+    return f"{base_url}/download/record?{urlencode(params)}"
